@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMA Podcast - Repaso Oposiciones</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+
+  <header class="top-bar">
+    <h1>🎙️ AMA Podcast</h1>
+    <div class="tabs">
+      <button class="tab-btn active" data-bloque="comun">Común (1-12)</button>
+      <button class="tab-btn" data-bloque="especifico">Específico (1-25)</button>
+    </div>
+  </header>
+
+  <main id="lista-episodios" class="episodios-container">
+    <!-- Se rellena dinámicamente desde app.js -->
+  </main>
+
+  <!-- Reproductor fijo inferior -->
+  <footer class="player-bar" id="player-bar">
+    <div class="player-info">
+      <span id="current-title">Selecciona un tema para escuchar</span>
+      <span id="current-percent" class="badge">0%</span>
+    </div>
+
+    <div class="progress-container" id="progress-container">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="time-labels">
+      <span id="time-current">00:00</span>
+      <span id="time-total">00:00</span>
+    </div>
+
+    <div class="controls">
+      <button id="btn-speed" class="ctrl-btn speed-btn">1.0x</button>
+      <button id="btn-back" class="ctrl-btn">-15s</button>
+      <button id="btn-play" class="ctrl-btn play-btn">▶</button>
+      <button id="btn-forward" class="ctrl-btn">+15s</button>
+      <button id="btn-reset" class="ctrl-btn" title="Reiniciar tema">↺</button>
+    </div>
+
+    <audio id="audio-engine" preload="metadata"></audio>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
