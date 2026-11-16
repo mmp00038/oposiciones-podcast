@@ -1,17 +1,39 @@
-// Catálogo de ejemplo (ampliable a los 12 comunes y 25 específicos)
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref as dbRef, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// 1. PEGA AQUÍ LA CONFIGURACIÓN DE TU FIREBASE (la misma que tienes en test-oposiciones)
+const firebaseConfig = {
+    apiKey: "AIzaSyDxijpzkKAmP85H5MqYsS_UnnmS1ySAgC0",
+    authDomain: "oposiciones-tests.firebaseapp.com",
+    databaseURL: "https://oposiciones-tests-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "oposiciones-tests",
+    storageBucket: "oposiciones-tests.firebasestorage.app",
+    messagingSenderId: "334815991038",
+    appId: "1:334815991038:web:287c3c46c72ee9837ec1af",
+    measurementId: "G-55K6MR5WKS"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+// 2. ENLACE BASE A TU RELEASE DE GITHUB
+const BASE_URL = "https://github.com/mmp00038/oposiciones-podcast/releases/download/audios";
+
+// 3. CATÁLOGO DE TEMAS
 const CATALOGO = {
   comun: [
-    { id: "comun_t01", titulo: "Tema 1. La Constitución Española de 1978", archivo: "audios/comun/tema01.mp3" },
-    { id: "comun_t02", titulo: "Tema 2. El Estatuto de Autonomía para Andalucía", archivo: "audios/comun/tema02.mp3" },
-    { id: "comun_t03", titulo: "Tema 3. Organización de la Junta de Andalucía", archivo: "audios/comun/tema03.mp3" }
+    // Aquí irán los temas comunes cuando los subas a la Release, por ejemplo:
+    // { id: "comun_t01_1", titulo: "Tema 1. La Constitución Española (Parte 1)", archivo: `${BASE_URL}/comun.Tema.1.-.1.mp4` }
   ],
   especifico: [
-    { id: "esp_t01", titulo: "Tema 1. El medio físico de Andalucía", archivo: "audios/especifico/tema01.mp3" },
-    { id: "esp_t02", titulo: "Tema 2. Espacios Naturales Protegidos (RENPA)", archivo: "audios/especifico/tema02.mp3" }
+    { id: "esp_t18_1", titulo: "Tema 18 - Parte 1", archivo: `${BASE_URL}/1.Tema.18.-.1.mp4` },
+    { id: "esp_t18_2", titulo: "Tema 18 - Parte 2", archivo: `${BASE_URL}/1.Tema.18.-.2.mp4` },
+    { id: "esp_t18_3", titulo: "Tema 18 - Parte 3", archivo: `${BASE_URL}/1.Tema.18.-.3.mp4` }
   ]
 };
 
-let bloqueActual = "comun";
+// Empezamos mostrando 'especifico' porque es donde tienes ya subido el Tema 18
+let bloqueActual = "especifico";
 let pistaActual = null;
 let progresoGuardado = JSON.parse(localStorage.getItem("ama_podcast_progreso")) || {};
 const velocidades = [1.0, 1.25, 1.5, 1.75, 2.0];
@@ -27,10 +49,33 @@ const timeTotal = document.getElementById("time-total");
 const currentTitle = document.getElementById("current-title");
 const currentPercent = document.getElementById("current-percent");
 
-// Renderizar lista según pestaña
+// Sincronización en tiempo real con Firebase Realtime Database
+const progresoRef = dbRef(db, "podcast_progreso");
+onValue(progresoRef, (snapshot) => {
+  const dataNube = snapshot.val();
+  if (dataNube) {
+    Object.keys(dataNube).forEach(id => {
+      const local = progresoGuardado[id];
+      const nube = dataNube[id];
+      if (!local || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
+        progresoGuardado[id] = nube;
+      }
+    });
+    localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+    renderLista();
+  }
+});
+
 function renderLista() {
   listaEl.innerHTML = "";
-  CATALOGO[bloqueActual].forEach(ep => {
+  const episodios = CATALOGO[bloqueActual];
+
+  if (!episodios || episodios.length === 0) {
+    listaEl.innerHTML = `<p style="color: #b3b3b3; text-align: center; padding: 30px 10px;">Aún no hay audios añadidos en este bloque.</p>`;
+    return;
+  }
+
+  episodios.forEach(ep => {
     const data = progresoGuardado[ep.id] || { time: 0, duration: 0, percent: 0, completed: false };
     const isPlaying = pistaActual && pistaActual.id === ep.id;
 
@@ -52,19 +97,18 @@ function renderLista() {
   });
 }
 
-// Cargar y reanudar pista donde se quedó
 function cargarPista(ep) {
-  // Guardar estado de la pista anterior antes de cambiar
   if (pistaActual) guardarProgreso(true);
 
   pistaActual = ep;
-  currentTitle.textContent = ep.titulo;
+  currentTitle.textContent = "Cargando " + ep.titulo + "...";
   audio.src = ep.archivo;
   audio.playbackRate = velocidades[idxVelocidad];
 
   const saved = progresoGuardado[ep.id];
 
   audio.onloadedmetadata = () => {
+    currentTitle.textContent = ep.titulo;
     timeTotal.textContent = formatTime(audio.duration);
     if (saved && !saved.completed && saved.time > 0) {
       // Retroceso inteligente de 4 segundos para retomar el hilo
@@ -77,32 +121,37 @@ function cargarPista(ep) {
     actualizarMediaSession(ep);
     renderLista();
   };
+
+  audio.onerror = () => {
+    currentTitle.textContent = "⚠️ Error al cargar el audio desde GitHub";
+    btnPlay.textContent = "▶";
+  };
 }
 
-// Guardar progreso en LocalStorage (y aquí conectaremos Firebase)
 function guardarProgreso(forzar = false) {
   if (!pistaActual || !audio.duration) return;
 
   const ahora = Date.now();
-  if (!forzar && ahora - ultimoGuardado < 4000) return; // Guardar cada 4s
+  if (!forzar && ahora - ultimoGuardado < 5000) return;
   ultimoGuardado = ahora;
 
   const percent = Math.min(100, Math.round((audio.currentTime / audio.duration) * 100));
   const completed = percent >= 96;
 
-  progresoGuardado[pistaActual.id] = {
-    time: completed ? 0 : audio.currentTime,
-    duration: audio.duration,
+  const registro = {
+    time: completed ? 0 : Math.floor(audio.currentTime),
+    duration: Math.floor(audio.duration),
     percent: completed ? 100 : percent,
     completed: completed,
     updatedAt: ahora
   };
 
+  progresoGuardado[pistaActual.id] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+  set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
   renderLista();
 }
 
-// Eventos del reproductor
 audio.ontimeupdate = () => {
   if (!audio.duration) return;
   const pct = Math.round((audio.currentTime / audio.duration) * 100);
@@ -112,24 +161,13 @@ audio.ontimeupdate = () => {
   guardarProgreso(false);
 };
 
-audio.onpause = () => {
-  btnPlay.textContent = "▶";
-  guardarProgreso(true);
-};
-
-audio.onended = () => {
-  btnPlay.textContent = "▶";
-  guardarProgreso(true);
-};
+audio.onpause = () => { btnPlay.textContent = "▶"; guardarProgreso(true); };
+audio.onended = () => { btnPlay.textContent = "▶"; guardarProgreso(true); };
 
 btnPlay.onclick = () => {
   if (!pistaActual) return;
-  if (audio.paused) {
-    audio.play();
-    btnPlay.textContent = "❚❚";
-  } else {
-    audio.pause();
-  }
+  if (audio.paused) { audio.play(); btnPlay.textContent = "❚❚"; }
+  else { audio.pause(); }
 };
 
 document.getElementById("btn-back").onclick = () => { if (pistaActual) audio.currentTime = Math.max(0, audio.currentTime - 15); };
@@ -145,11 +183,13 @@ document.getElementById("btn-speed").onclick = (e) => {
 document.getElementById("btn-reset").onclick = () => {
   if (!pistaActual) return;
   audio.currentTime = 0;
-  progresoGuardado[pistaActual.id] = { time: 0, duration: audio.duration, percent: 0, completed: false };
-  guardarProgreso(true);
+  const registro = { time: 0, duration: Math.floor(audio.duration), percent: 0, completed: false, updatedAt: Date.now() };
+  progresoGuardado[pistaActual.id] = registro;
+  localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+  set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+  renderLista();
 };
 
-// Barra de progreso clicable
 document.getElementById("progress-container").onclick = (e) => {
   if (!pistaActual || !audio.duration) return;
   const rect = e.target.getBoundingClientRect();
@@ -158,7 +198,6 @@ document.getElementById("progress-container").onclick = (e) => {
   guardarProgreso(true);
 };
 
-// Cambio de pestaña Común / Específico
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -168,7 +207,6 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   };
 });
 
-// Controles en pantalla de bloqueo del móvil (Media Session API)
 function actualizarMediaSession(ep) {
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -190,5 +228,4 @@ function formatTime(sec) {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-// Inicializar
 renderLista();
