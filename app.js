@@ -41,11 +41,50 @@ const CATALOGO = {
   especifico: [
     {
       temaId: "esp_t18",
-      titulo: "Tema 18",
+      titulo: "1. Tema 18",
       partes: [
         { id: "esp_t18_1", titulo: "Parte 1", archivo: `${BASE_URL}/1.Tema.18.-.1.mp4` },
         { id: "esp_t18_2", titulo: "Parte 2", archivo: `${BASE_URL}/1.Tema.18.-.2.mp4` },
         { id: "esp_t18_3", titulo: "Parte 3", archivo: `${BASE_URL}/1.Tema.18.-.3.mp4` }
+      ]
+    },
+    {
+      temaId: "esp_t17",
+      titulo: "2. Tema 17",
+      partes: [
+        { id: "esp_t17_1", titulo: "Parte 1", archivo: `${BASE_URL}/2.Tema.17.-.1.mp4` },
+        { id: "esp_t17_2", titulo: "Parte 2", archivo: `${BASE_URL}/2.Tema.17.-.2.mp4` }
+      ]
+    },
+    {
+      temaId: "esp_t14",
+      titulo: "3. Tema 14",
+      partes: [
+        { id: "esp_t14_1", titulo: "Parte 1", archivo: `${BASE_URL}/3.Tema.14.-.1.mp4` },
+        { id: "esp_t14_2", titulo: "Parte 2", archivo: `${BASE_URL}/3.Tema.14.-.2.mp4` },
+        { id: "esp_t14_3", titulo: "Parte 3", archivo: `${BASE_URL}/3.Tema.14.-.3.mp4` },
+        { id: "esp_t14_4", titulo: "Parte 4", archivo: `${BASE_URL}/3.Tema.14.-.4.mp4` }
+      ]
+    },
+    {
+      temaId: "esp_t15",
+      titulo: "4. Tema 15",
+      partes: [
+        { id: "esp_t15_1", titulo: "Parte 1", archivo: `${BASE_URL}/4.Tema.15.-.1.mp4` },
+        { id: "esp_t15_2", titulo: "Parte 2", archivo: `${BASE_URL}/4.Tema.15.-.2.mp4` },
+        { id: "esp_t15_3", titulo: "Parte 3", archivo: `${BASE_URL}/4.Tema.15.-.3.mp4` },
+        { id: "esp_t15_4", titulo: "Parte 4", archivo: `${BASE_URL}/4.Tema.15.-.4.mp4` }
+      ]
+    },
+    {
+      temaId: "esp_t04",
+      titulo: "5. Tema 4",
+      partes: [
+        { id: "esp_t04_1", titulo: "Parte 1", archivo: `${BASE_URL}/5.Tema.4.-.1.mp4` },
+        { id: "esp_t04_2", titulo: "Parte 2", archivo: `${BASE_URL}/5.Tema.4.-.2.mp4` },
+        { id: "esp_t04_3", titulo: "Parte 3", archivo: `${BASE_URL}/5.Tema.4.-.3.mp4` },
+        { id: "esp_t04_4", titulo: "Parte 4", archivo: `${BASE_URL}/5.Tema.4.-.4.mp4` },
+        { id: "esp_t04_5", titulo: "Parte 5 (Anexos)", archivo: `${BASE_URL}/5.Tema.4.-.5.anexos.mp4` }
       ]
     }
   ]
