@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref as dbRef, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-// 1. PEGA AQUÍ LA CONFIGURACIÓN DE TU FIREBASE (la misma que tienes en test-oposiciones)
+// 1. PEGA AQUÍ LA CONFIGURACIÓN REAL DE TU FIREBASE (la de test-oposiciones)
 const firebaseConfig = {
     apiKey: "AIzaSyDxijpzkKAmP85H5MqYsS_UnnmS1ySAgC0",
     authDomain: "oposiciones-tests.firebaseapp.com",
@@ -13,28 +13,48 @@ const firebaseConfig = {
     measurementId: "G-55K6MR5WKS"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+let db = null;
+try {
+  if (firebaseConfig.apiKey !== "TU_API_KEY") {
+    const app = initializeApp(firebaseConfig);
+    db = getDatabase(app);
+  }
+} catch (error) {
+  console.error("Error inicializando Firebase:", error);
+}
 
 // 2. ENLACE BASE A TU RELEASE DE GITHUB
 const BASE_URL = "https://github.com/mmp00038/oposiciones-podcast/releases/download/audios";
 
-// 3. CATÁLOGO DE TEMAS
+// 3. CATÁLOGO AGRUPADO POR TEMAS
 const CATALOGO = {
   comun: [
-    // Aquí irán los temas comunes cuando los subas a la Release, por ejemplo:
-    // { id: "comun_t01_1", titulo: "Tema 1. La Constitución Española (Parte 1)", archivo: `${BASE_URL}/comun.Tema.1.-.1.mp4` }
+    // Ejemplo de cómo añadir un tema común cuando lo subas:
+    // {
+    //   temaId: "comun_t01",
+    //   titulo: "Tema 1. La Constitución Española de 1978",
+    //   partes: [
+    //     { id: "comun_t01_1", titulo: "Parte 1", archivo: `${BASE_URL}/comun.Tema.1.-.1.mp4` }
+    //   ]
+    // }
   ],
   especifico: [
-    { id: "esp_t18_1", titulo: "Tema 18 - Parte 1", archivo: `${BASE_URL}/1.Tema.18.-.1.mp4` },
-    { id: "esp_t18_2", titulo: "Tema 18 - Parte 2", archivo: `${BASE_URL}/1.Tema.18.-.2.mp4` },
-    { id: "esp_t18_3", titulo: "Tema 18 - Parte 3", archivo: `${BASE_URL}/1.Tema.18.-.3.mp4` }
+    {
+      temaId: "esp_t18",
+      titulo: "Tema 18",
+      partes: [
+        { id: "esp_t18_1", titulo: "Parte 1", archivo: `${BASE_URL}/1.Tema.18.-.1.mp4` },
+        { id: "esp_t18_2", titulo: "Parte 2", archivo: `${BASE_URL}/1.Tema.18.-.2.mp4` },
+        { id: "esp_t18_3", titulo: "Parte 3", archivo: `${BASE_URL}/1.Tema.18.-.3.mp4` }
+      ]
+    }
   ]
 };
 
-// Empezamos mostrando 'especifico' porque es donde tienes ya subido el Tema 18
-let bloqueActual = "especifico";
+// Arranca sincronizado con la pestaña 'Común'
+let bloqueActual = "comun";
 let pistaActual = null;
+let temaAbiertoId = null; // Controla qué acordeón está desplegado
 let progresoGuardado = JSON.parse(localStorage.getItem("ama_podcast_progreso")) || {};
 const velocidades = [1.0, 1.25, 1.5, 1.75, 2.0];
 let idxVelocidad = 0;
@@ -50,75 +70,135 @@ const currentTitle = document.getElementById("current-title");
 const currentPercent = document.getElementById("current-percent");
 
 // Sincronización en tiempo real con Firebase Realtime Database
-const progresoRef = dbRef(db, "podcast_progreso");
-onValue(progresoRef, (snapshot) => {
-  const dataNube = snapshot.val();
-  if (dataNube) {
-    Object.keys(dataNube).forEach(id => {
-      const local = progresoGuardado[id];
-      const nube = dataNube[id];
-      if (!local || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
-        progresoGuardado[id] = nube;
-      }
-    });
-    localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-    renderLista();
-  }
-});
+if (db) {
+  const progresoRef = dbRef(db, "podcast_progreso");
+  onValue(progresoRef, (snapshot) => {
+    const dataNube = snapshot.val();
+    if (dataNube) {
+      Object.keys(dataNube).forEach(id => {
+        const local = progresoGuardado[id];
+        const nube = dataNube[id];
+        if (!local || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
+          progresoGuardado[id] = nube;
+        }
+      });
+      localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+      renderLista();
+    }
+  });
+}
 
 function renderLista() {
   listaEl.innerHTML = "";
-  const episodios = CATALOGO[bloqueActual];
+  const temas = CATALOGO[bloqueActual];
 
-  if (!episodios || episodios.length === 0) {
+  if (!temas || temas.length === 0) {
     listaEl.innerHTML = `<p style="color: #b3b3b3; text-align: center; padding: 30px 10px;">Aún no hay audios añadidos en este bloque.</p>`;
     return;
   }
 
-  episodios.forEach(ep => {
-    const data = progresoGuardado[ep.id] || { time: 0, duration: 0, percent: 0, completed: false };
-    const isPlaying = pistaActual && pistaActual.id === ep.id;
+  temas.forEach(tema => {
+    // Calcular porcentaje global del tema (media de todas sus partes)
+    let sumaPorcentajes = 0;
+    let contienePistaActiva = false;
 
-    const card = document.createElement("div");
-    card.className = `episodio-card ${isPlaying ? "playing" : ""}`;
-    card.innerHTML = `
-      <div class="ep-header">
-        <span class="ep-title">${ep.titulo}</span>
-        <span class="ep-percent ${data.completed ? "done" : ""}">
-          ${data.completed ? "✓ Completado" : `${data.percent}%`}
+    tema.partes.forEach(parte => {
+      const data = progresoGuardado[parte.id] || { percent: 0, completed: false };
+      sumaPorcentajes += data.completed ? 100 : (data.percent || 0);
+      if (pistaActual && pistaActual.id === parte.id) {
+        contienePistaActiva = true;
+      }
+    });
+
+    const pctGlobal = Math.round(sumaPorcentajes / tema.partes.length);
+    const temaCompletado = pctGlobal === 100;
+    const estaAbierto = temaAbiertoId === tema.temaId;
+
+    const grupoEl = document.createElement("div");
+    grupoEl.className = `tema-grupo ${estaAbierto ? "open" : ""} ${contienePistaActiva ? "has-playing" : ""}`;
+
+    // Cabecera desplegable del tema
+    const headerEl = document.createElement("div");
+    headerEl.className = "tema-header";
+    headerEl.innerHTML = `
+      <div class="tema-top">
+        <span class="tema-titulo">
+          <span class="chevron">▶</span>
+          ${tema.titulo}
         </span>
+        <div class="tema-meta">
+          <span class="partes-badge">${tema.partes.length} ${tema.partes.length === 1 ? "pista" : "pistas"}</span>
+          <span class="ep-percent ${temaCompletado ? "done" : ""}">
+            ${temaCompletado ? "✓ 100%" : `${pctGlobal}%`}
+          </span>
+        </div>
       </div>
       <div class="mini-progress-bg">
-        <div class="mini-progress-fill" style="width: ${data.percent}%"></div>
+        <div class="mini-progress-fill" style="width: ${pctGlobal}%"></div>
       </div>
     `;
-    card.onclick = () => cargarPista(ep);
-    listaEl.appendChild(card);
+
+    headerEl.onclick = () => {
+      temaAbiertoId = (temaAbiertoId === tema.temaId) ? null : tema.temaId;
+      renderLista();
+    };
+
+    // Contenedor de las partes interiores
+    const partesContainer = document.createElement("div");
+    partesContainer.className = "tema-partes";
+
+    tema.partes.forEach(parte => {
+      const data = progresoGuardado[parte.id] || { time: 0, duration: 0, percent: 0, completed: false };
+      const isPlaying = pistaActual && pistaActual.id === parte.id;
+
+      const card = document.createElement("div");
+      card.className = `episodio-card ${isPlaying ? "playing" : ""}`;
+      card.innerHTML = `
+        <div class="ep-header">
+          <span class="ep-title">${parte.titulo}</span>
+          <span class="ep-percent ${data.completed ? "done" : ""}">
+            ${data.completed ? "✓ Completado" : `${data.percent}%`}
+          </span>
+        </div>
+        <div class="mini-progress-bg">
+          <div class="mini-progress-fill" style="width: ${data.percent}%"></div>
+        </div>
+      `;
+      card.onclick = (e) => {
+        e.stopPropagation(); // Evita que se cierre el acordeón al pulsar la pista
+        cargarPista(parte, tema.titulo);
+      };
+      partesContainer.appendChild(card);
+    });
+
+    grupoEl.appendChild(headerEl);
+    grupoEl.appendChild(partesContainer);
+    listaEl.appendChild(grupoEl);
   });
 }
 
-function cargarPista(ep) {
+function cargarPista(ep, tituloTema) {
   if (pistaActual) guardarProgreso(true);
 
-  pistaActual = ep;
-  currentTitle.textContent = "Cargando " + ep.titulo + "...";
+  const nombreCompleto = `${tituloTema} · ${ep.titulo}`;
+  pistaActual = { ...ep, nombreCompleto };
+  currentTitle.textContent = "Cargando " + nombreCompleto + "...";
   audio.src = ep.archivo;
   audio.playbackRate = velocidades[idxVelocidad];
 
   const saved = progresoGuardado[ep.id];
 
   audio.onloadedmetadata = () => {
-    currentTitle.textContent = ep.titulo;
+    currentTitle.textContent = nombreCompleto;
     timeTotal.textContent = formatTime(audio.duration);
     if (saved && !saved.completed && saved.time > 0) {
-      // Retroceso inteligente de 4 segundos para retomar el hilo
       audio.currentTime = Math.max(0, saved.time - 4);
     } else {
       audio.currentTime = 0;
     }
     audio.play();
     btnPlay.textContent = "❚❚";
-    actualizarMediaSession(ep);
+    actualizarMediaSession(nombreCompleto);
     renderLista();
   };
 
@@ -148,7 +228,7 @@ function guardarProgreso(forzar = false) {
 
   progresoGuardado[pistaActual.id] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-  set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+  if (db) set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
   renderLista();
 }
 
@@ -186,7 +266,7 @@ document.getElementById("btn-reset").onclick = () => {
   const registro = { time: 0, duration: Math.floor(audio.duration), percent: 0, completed: false, updatedAt: Date.now() };
   progresoGuardado[pistaActual.id] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-  set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+  if (db) set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
   renderLista();
 };
 
@@ -207,10 +287,10 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   };
 });
 
-function actualizarMediaSession(ep) {
+function actualizarMediaSession(nombreCompleto) {
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: ep.titulo,
+      title: nombreCompleto,
       artist: "Oposiciones AMA - C1.2100",
       album: bloqueActual === "comun" ? "Temario Común" : "Temario Específico"
     });
