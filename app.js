@@ -29,7 +29,7 @@ const BASE_URL = "https://github.com/mmp00038/oposiciones-podcast/releases/downl
 // 3. CATÁLOGO AGRUPADO POR TEMAS
 const CATALOGO = {
   comun: [
-    // Ejemplo de cómo añadir un tema común cuando lo subas:
+    // Ejemplo:
     // {
     //   temaId: "comun_t01",
     //   titulo: "Tema 1. La Constitución Española de 1978",
@@ -51,11 +51,11 @@ const CATALOGO = {
   ]
 };
 
-// Arranca sincronizado con la pestaña 'Común'
 let bloqueActual = "comun";
 let pistaActual = null;
-let temaAbiertoId = null; // Controla qué acordeón está desplegado
+let temaAbiertoId = null;
 let progresoGuardado = JSON.parse(localStorage.getItem("ama_podcast_progreso")) || {};
+let vueltasGuardadas = JSON.parse(localStorage.getItem("ama_podcast_vueltas")) || {};
 const velocidades = [1.0, 1.25, 1.5, 1.75, 2.0];
 let idxVelocidad = 0;
 let ultimoGuardado = 0;
@@ -69,10 +69,9 @@ const timeTotal = document.getElementById("time-total");
 const currentTitle = document.getElementById("current-title");
 const currentPercent = document.getElementById("current-percent");
 
-// Sincronización en tiempo real con Firebase Realtime Database
+// Sincronización en tiempo real con Firebase (Progreso de pistas + Vueltas completas por tema)
 if (db) {
-  const progresoRef = dbRef(db, "podcast_progreso");
-  onValue(progresoRef, (snapshot) => {
+  onValue(dbRef(db, "podcast_progreso"), (snapshot) => {
     const dataNube = snapshot.val();
     if (dataNube) {
       Object.keys(dataNube).forEach(id => {
@@ -86,6 +85,49 @@ if (db) {
       renderLista();
     }
   });
+
+  onValue(dbRef(db, "podcast_vueltas"), (snapshot) => {
+    const vueltasNube = snapshot.val();
+    if (vueltasNube) {
+      Object.keys(vueltasNube).forEach(temaId => {
+        const local = vueltasGuardadas[temaId] || { count: 0, updatedAt: 0 };
+        const nube = vueltasNube[temaId];
+        if (nube.count > local.count || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
+          vueltasGuardadas[temaId] = nube;
+        }
+      });
+      localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
+      renderLista();
+    }
+  });
+}
+
+// Busca a qué tema pertenece una pista y comprueba si ya se han completado TODAS sus partes
+function verificarTemaCompleto(parteId) {
+  for (const bloque of ["comun", "especifico"]) {
+    const tema = CATALOGO[bloque].find(t => t.partes.some(p => p.id === parteId));
+    if (tema) {
+      const todasCompletadas = tema.partes.every(p => progresoGuardado[p.id]?.completed === true);
+      if (todasCompletadas) {
+        const ahora = Date.now();
+        const actual = vueltasGuardadas[tema.temaId]?.count || 0;
+        const nuevoRegistroVueltas = { count: actual + 1, updatedAt: ahora };
+
+        vueltasGuardadas[tema.temaId] = nuevoRegistroVueltas;
+        localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
+        if (db) set(dbRef(db, `podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
+
+        // Resetea todas las partes del tema a 0% para dejarlo listo para la siguiente vuelta
+        tema.partes.forEach(p => {
+          const resetParte = { time: 0, duration: progresoGuardado[p.id]?.duration || 0, percent: 0, completed: false, updatedAt: ahora };
+          progresoGuardado[p.id] = resetParte;
+          if (db) set(dbRef(db, `podcast_progreso/${p.id}`), resetParte);
+        });
+        localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+      }
+      break;
+    }
+  }
 }
 
 function renderLista() {
@@ -98,7 +140,6 @@ function renderLista() {
   }
 
   temas.forEach(tema => {
-    // Calcular porcentaje global del tema (media de todas sus partes)
     let sumaPorcentajes = 0;
     let contienePistaActiva = false;
 
@@ -111,13 +152,13 @@ function renderLista() {
     });
 
     const pctGlobal = Math.round(sumaPorcentajes / tema.partes.length);
-    const temaCompletado = pctGlobal === 100;
     const estaAbierto = temaAbiertoId === tema.temaId;
+    const numVueltas = vueltasGuardadas[tema.temaId]?.count || 0;
+    const textoVueltas = numVueltas === 1 ? "🔄 1 vuelta" : `🔄 ${numVueltas} vueltas`;
 
     const grupoEl = document.createElement("div");
     grupoEl.className = `tema-grupo ${estaAbierto ? "open" : ""} ${contienePistaActiva ? "has-playing" : ""}`;
 
-    // Cabecera desplegable del tema
     const headerEl = document.createElement("div");
     headerEl.className = "tema-header";
     headerEl.innerHTML = `
@@ -127,10 +168,9 @@ function renderLista() {
           ${tema.titulo}
         </span>
         <div class="tema-meta">
+          <span class="vueltas-badge ${numVueltas === 0 ? "cero" : ""}" title="Veces completado el tema entero">${textoVueltas}</span>
           <span class="partes-badge">${tema.partes.length} ${tema.partes.length === 1 ? "pista" : "pistas"}</span>
-          <span class="ep-percent ${temaCompletado ? "done" : ""}">
-            ${temaCompletado ? "✓ 100%" : `${pctGlobal}%`}
-          </span>
+          <span class="ep-percent">${pctGlobal}%</span>
         </div>
       </div>
       <div class="mini-progress-bg">
@@ -143,7 +183,6 @@ function renderLista() {
       renderLista();
     };
 
-    // Contenedor de las partes interiores
     const partesContainer = document.createElement("div");
     partesContainer.className = "tema-partes";
 
@@ -157,7 +196,7 @@ function renderLista() {
         <div class="ep-header">
           <span class="ep-title">${parte.titulo}</span>
           <span class="ep-percent ${data.completed ? "done" : ""}">
-            ${data.completed ? "✓ Completado" : `${data.percent}%`}
+            ${data.completed ? "✓ Lista" : `${data.percent}%`}
           </span>
         </div>
         <div class="mini-progress-bg">
@@ -165,7 +204,7 @@ function renderLista() {
         </div>
       `;
       card.onclick = (e) => {
-        e.stopPropagation(); // Evita que se cierre el acordeón al pulsar la pista
+        e.stopPropagation();
         cargarPista(parte, tema.titulo);
       };
       partesContainer.appendChild(card);
@@ -229,6 +268,12 @@ function guardarProgreso(forzar = false) {
   progresoGuardado[pistaActual.id] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
   if (db) set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+
+  // Si esta parte acaba de completarse, comprobamos si ya están todas las partes del tema listas
+  if (completed) {
+    verificarTemaCompleto(pistaActual.id);
+  }
+
   renderLista();
 }
 

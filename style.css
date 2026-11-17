@@ -176,3 +176,20 @@ body {
 .tema-partes .episodio-card.playing {
   background: #1f2e21;
 }
+
+.vueltas-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(76, 175, 80, 0.18);
+  color: #81c784;
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.vueltas-badge.cero {
+  background: #262626;
+  color: var(--text-muted);
+  border-color: #333;
+}
