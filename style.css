@@ -193,3 +193,19 @@ body {
   color: var(--text-muted);
   border-color: #333;
 }
+
+.controls {
+  gap: 8px; /* Ajuste ligero para que entren los 6 botones en móvil */
+}
+
+.auto-btn {
+  font-size: 0.75rem;
+  border: 1px solid #333;
+  color: var(--text-muted);
+}
+
+.auto-btn.active {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: var(--primary-light);
+  color: #81c784;
+}

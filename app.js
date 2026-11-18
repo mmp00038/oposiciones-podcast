@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref as dbRef, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-// 1. PEGA AQUÍ LA CONFIGURACIÓN REAL DE TU FIREBASE (la de test-oposiciones)
+// 1. PEGA AQUÍ LA CONFIGURACIÓN REAL DE TU FIREBASE
 const firebaseConfig = {
     apiKey: "AIzaSyDxijpzkKAmP85H5MqYsS_UnnmS1ySAgC0",
     authDomain: "oposiciones-tests.firebaseapp.com",
@@ -26,17 +26,10 @@ try {
 // 2. ENLACE BASE A TU RELEASE DE GITHUB
 const BASE_URL = "https://github.com/mmp00038/oposiciones-podcast/releases/download/audios";
 
-// 3. CATÁLOGO AGRUPADO POR TEMAS
+// 3. CATÁLOGO AGRUPADO POR TEMAS (en el orden exacto de explicación)
 const CATALOGO = {
   comun: [
-    // Ejemplo:
-    // {
-    //   temaId: "comun_t01",
-    //   titulo: "Tema 1. La Constitución Española de 1978",
-    //   partes: [
-    //     { id: "comun_t01_1", titulo: "Parte 1", archivo: `${BASE_URL}/comun.Tema.1.-.1.mp4` }
-    //   ]
-    // }
+    // Aquí irán los temas comunes cuando los subas
   ],
   especifico: [
     {
@@ -84,7 +77,7 @@ const CATALOGO = {
         { id: "esp_t04_2", titulo: "Parte 2", archivo: `${BASE_URL}/5.Tema.4.-.2.mp4` },
         { id: "esp_t04_3", titulo: "Parte 3", archivo: `${BASE_URL}/5.Tema.4.-.3.mp4` },
         { id: "esp_t04_4", titulo: "Parte 4", archivo: `${BASE_URL}/5.Tema.4.-.4.mp4` },
-        { id: "esp_t04_5", titulo: "Parte 5 (Anexos)", archivo: `${BASE_URL}/5.Tema.4.-.5.anexos.mp4` }
+        { id: "esp_t04_5", titulo: "Parte 5 (Anexos)", archivo: `${BASE_URL}/5.Tema.4.-.5.(anexos).mp4` }
       ]
     }
   ]
@@ -95,20 +88,40 @@ let pistaActual = null;
 let temaAbiertoId = null;
 let progresoGuardado = JSON.parse(localStorage.getItem("ama_podcast_progreso")) || {};
 let vueltasGuardadas = JSON.parse(localStorage.getItem("ama_podcast_vueltas")) || {};
+let autoPlayContinuo = JSON.parse(localStorage.getItem("ama_podcast_autoplay")) || false;
+
 const velocidades = [1.0, 1.25, 1.5, 1.75, 2.0];
 let idxVelocidad = 0;
 let ultimoGuardado = 0;
+let bloqueandoGuardado = false; // Evita que eventos residuales pisen un reseteo de vuelta
 
 const audio = document.getElementById("audio-engine");
 const listaEl = document.getElementById("lista-episodios");
 const btnPlay = document.getElementById("btn-play");
+const btnAuto = document.getElementById("btn-auto");
 const progressBar = document.getElementById("progress-bar");
 const timeCurrent = document.getElementById("time-current");
 const timeTotal = document.getElementById("time-total");
 const currentTitle = document.getElementById("current-title");
 const currentPercent = document.getElementById("current-percent");
 
-// Sincronización en tiempo real con Firebase (Progreso de pistas + Vueltas completas por tema)
+// Inicializar estado visual del botón Auto
+function actualizarBotonAuto() {
+  if (!btnAuto) return;
+  btnAuto.textContent = autoPlayContinuo ? "Auto: ON" : "Auto: OFF";
+  btnAuto.classList.toggle("active", autoPlayContinuo);
+}
+actualizarBotonAuto();
+
+if (btnAuto) {
+  btnAuto.onclick = () => {
+    autoPlayContinuo = !autoPlayContinuo;
+    localStorage.setItem("ama_podcast_autoplay", JSON.stringify(autoPlayContinuo));
+    actualizarBotonAuto();
+  };
+}
+
+// Sincronización en tiempo real con Firebase
 if (db) {
   onValue(dbRef(db, "podcast_progreso"), (snapshot) => {
     const dataNube = snapshot.val();
@@ -141,32 +154,63 @@ if (db) {
   });
 }
 
-// Busca a qué tema pertenece una pista y comprueba si ya se han completado TODAS sus partes
-function verificarTemaCompleto(parteId) {
+// Busca el tema al que pertenece una pista y su índice dentro de él
+function localizarPistaEnCatalogo(parteId) {
   for (const bloque of ["comun", "especifico"]) {
-    const tema = CATALOGO[bloque].find(t => t.partes.some(p => p.id === parteId));
-    if (tema) {
-      const todasCompletadas = tema.partes.every(p => progresoGuardado[p.id]?.completed === true);
-      if (todasCompletadas) {
-        const ahora = Date.now();
-        const actual = vueltasGuardadas[tema.temaId]?.count || 0;
-        const nuevoRegistroVueltas = { count: actual + 1, updatedAt: ahora };
-
-        vueltasGuardadas[tema.temaId] = nuevoRegistroVueltas;
-        localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
-        if (db) set(dbRef(db, `podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
-
-        // Resetea todas las partes del tema a 0% para dejarlo listo para la siguiente vuelta
-        tema.partes.forEach(p => {
-          const resetParte = { time: 0, duration: progresoGuardado[p.id]?.duration || 0, percent: 0, completed: false, updatedAt: ahora };
-          progresoGuardado[p.id] = resetParte;
-          if (db) set(dbRef(db, `podcast_progreso/${p.id}`), resetParte);
-        });
-        localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+    for (const tema of CATALOGO[bloque]) {
+      const idx = tema.partes.findIndex(p => p.id === parteId);
+      if (idx !== -1) {
+        return { bloque, tema, indiceParte: idx };
       }
-      break;
     }
   }
+  return null;
+}
+
+// Comprueba si se han completado TODAS las partes de un tema y resetea todas a 0%
+function verificarTemaCompleto(parteId) {
+  const info = localizarPistaEnCatalogo(parteId);
+  if (!info) return false;
+
+  const { tema } = info;
+  const todasCompletadas = tema.partes.every(p => progresoGuardado[p.id]?.completed === true);
+
+  if (todasCompletadas) {
+    bloqueandoGuardado = true; // Bloquea cualquier evento tardío del reproductor
+    const ahora = Date.now() + 100; // Garantiza timestamp superior al último guardado
+    const actual = vueltasGuardadas[tema.temaId]?.count || 0;
+    const nuevoRegistroVueltas = { count: actual + 1, updatedAt: ahora };
+
+    vueltasGuardadas[tema.temaId] = nuevoRegistroVueltas;
+    localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
+    if (db) set(dbRef(db, `podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
+
+    // Resetea TODAS las partes del tema a 0% (incluida la última)
+    tema.partes.forEach(p => {
+      const resetParte = {
+        time: 0,
+        duration: progresoGuardado[p.id]?.duration || 0,
+        percent: 0,
+        completed: false,
+        updatedAt: ahora
+      };
+      progresoGuardado[p.id] = resetParte;
+      if (db) set(dbRef(db, `podcast_progreso/${p.id}`), resetParte);
+    });
+
+    localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+
+    // Limpia la barra del reproductor inferior al completar la vuelta
+    progressBar.style.width = "0%";
+    timeCurrent.textContent = "00:00";
+    currentPercent.textContent = "0%";
+    currentTitle.textContent = `✓ ${tema.titulo} completado (+1 vuelta)`;
+    pistaActual = null;
+
+    setTimeout(() => { bloqueandoGuardado = false; }, 1000);
+    return true;
+  }
+  return false;
 }
 
 function renderLista() {
@@ -256,10 +300,13 @@ function renderLista() {
 }
 
 function cargarPista(ep, tituloTema) {
-  if (pistaActual) guardarProgreso(true);
+  if (pistaActual && pistaActual.id !== ep.id) {
+    guardarProgreso(true);
+  }
 
+  bloqueandoGuardado = false;
   const nombreCompleto = `${tituloTema} · ${ep.titulo}`;
-  pistaActual = { ...ep, nombreCompleto };
+  pistaActual = { ...ep, nombreCompleto, tituloTema };
   currentTitle.textContent = "Cargando " + nombreCompleto + "...";
   audio.src = ep.archivo;
   audio.playbackRate = velocidades[idxVelocidad];
@@ -286,16 +333,17 @@ function cargarPista(ep, tituloTema) {
   };
 }
 
-function guardarProgreso(forzar = false) {
-  if (!pistaActual || !audio.duration) return;
+function guardarProgreso(forzar = false, esFinDePista = false) {
+  if (bloqueandoGuardado || !pistaActual || !audio.duration) return false;
 
   const ahora = Date.now();
-  if (!forzar && ahora - ultimoGuardado < 5000) return;
+  if (!forzar && ahora - ultimoGuardado < 5000) return false;
   ultimoGuardado = ahora;
 
-  const percent = Math.min(100, Math.round((audio.currentTime / audio.duration) * 100));
-  const completed = percent >= 96;
+  const percent = esFinDePista ? 100 : Math.min(100, Math.round((audio.currentTime / audio.duration) * 100));
+  const completed = esFinDePista || percent >= 96;
 
+  const idPista = pistaActual.id;
   const registro = {
     time: completed ? 0 : Math.floor(audio.currentTime),
     duration: Math.floor(audio.duration),
@@ -304,29 +352,53 @@ function guardarProgreso(forzar = false) {
     updatedAt: ahora
   };
 
-  progresoGuardado[pistaActual.id] = registro;
+  progresoGuardado[idPista] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-  if (db) set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+  if (db) set(dbRef(db, `podcast_progreso/${idPista}`), registro);
 
-  // Si esta parte acaba de completarse, comprobamos si ya están todas las partes del tema listas
+  let temaCompletado = false;
   if (completed) {
-    verificarTemaCompleto(pistaActual.id);
+    temaCompletado = verificarTemaCompleto(idPista);
   }
 
   renderLista();
+  return temaCompletado;
 }
 
 audio.ontimeupdate = () => {
-  if (!audio.duration) return;
+  if (bloqueandoGuardado || !pistaActual || !audio.duration) return;
   const pct = Math.round((audio.currentTime / audio.duration) * 100);
   progressBar.style.width = `${pct}%`;
   timeCurrent.textContent = formatTime(audio.currentTime);
   currentPercent.textContent = `${pct}%`;
-  guardarProgreso(false);
+  guardarProgreso(false, false);
 };
 
-audio.onpause = () => { btnPlay.textContent = "▶"; guardarProgreso(true); };
-audio.onended = () => { btnPlay.textContent = "▶"; guardarProgreso(true); };
+audio.onpause = () => {
+  btnPlay.textContent = "▶";
+  if (!audio.ended && !bloqueandoGuardado) {
+    guardarProgreso(true, false);
+  }
+};
+
+audio.onended = () => {
+  btnPlay.textContent = "▶";
+  if (!pistaActual) return;
+
+  const pistaTerminadaId = pistaActual.id;
+  const info = localizarPistaEnCatalogo(pistaTerminadaId);
+
+  // Marca la pista como 100% terminada y comprueba si se completó el tema entero
+  const temaAcabado = guardarProgreso(true, true);
+
+  // Si Auto: ON está activo y el tema aún tiene más pistas por delante, pasa a la siguiente
+  if (autoPlayContinuo && !temaAcabado && info) {
+    const siguienteParte = info.tema.partes[info.indiceParte + 1];
+    if (siguienteParte) {
+      cargarPista(siguienteParte, info.tema.titulo);
+    }
+  }
+};
 
 btnPlay.onclick = () => {
   if (!pistaActual) return;
@@ -359,7 +431,7 @@ document.getElementById("progress-container").onclick = (e) => {
   const rect = e.target.getBoundingClientRect();
   const pos = (e.clientX - rect.left) / rect.width;
   audio.currentTime = pos * audio.duration;
-  guardarProgreso(true);
+  guardarProgreso(true, false);
 };
 
 document.querySelectorAll(".tab-btn").forEach(btn => {
