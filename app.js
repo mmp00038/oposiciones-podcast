@@ -27,7 +27,6 @@ try {
 const BASE_URL = "https://github.com/mmp00038/oposiciones-podcast/releases/download/audios";
 
 // 3. CATÁLOGO AGRUPADO POR TEMAS (en el orden exacto de explicación)
-// 3. CATÁLOGO AGRUPADO POR TEMAS (en el orden exacto de explicación)
 const CATALOGO = {
   comun: [
     // Aquí irán los temas comunes cuando los subas
