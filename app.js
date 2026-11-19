@@ -184,6 +184,275 @@ const CATALOGO = {
   ]
 };
 
+// 4. VARIABLES DE ESTADO Y REFERENCIAS AL DOM
+let bloqueActual = "comun";
+let pistaActual = null;
+let temaAbiertoId = null;
+let progresoGuardado = JSON.parse(localStorage.getItem("ama_podcast_progreso")) || {};
+let vueltasGuardadas = JSON.parse(localStorage.getItem("ama_podcast_vueltas")) || {};
+let autoPlayContinuo = JSON.parse(localStorage.getItem("ama_podcast_autoplay")) || false;
+
+const velocidades = [1.0, 1.25, 1.5, 1.75, 2.0];
+let idxVelocidad = 0;
+let ultimoGuardado = 0;
+let bloqueandoGuardado = false;
+
+const audio = document.getElementById("audio-engine");
+const listaEl = document.getElementById("lista-episodios");
+const btnPlay = document.getElementById("btn-play");
+const btnAuto = document.getElementById("btn-auto");
+const progressBar = document.getElementById("progress-bar");
+const timeCurrent = document.getElementById("time-current");
+const timeTotal = document.getElementById("time-total");
+const currentTitle = document.getElementById("current-title");
+const currentPercent = document.getElementById("current-percent");
+
+// Inicializar estado visual del botón Auto
+function actualizarBotonAuto() {
+  if (!btnAuto) return;
+  btnAuto.textContent = autoPlayContinuo ? "Auto: ON" : "Auto: OFF";
+  btnAuto.classList.toggle("active", autoPlayContinuo);
+}
+actualizarBotonAuto();
+
+if (btnAuto) {
+  btnAuto.onclick = () => {
+    autoPlayContinuo = !autoPlayContinuo;
+    localStorage.setItem("ama_podcast_autoplay", JSON.stringify(autoPlayContinuo));
+    actualizarBotonAuto();
+  };
+}
+
+// 5. SINCRONIZACIÓN EN TIEMPO REAL CON FIREBASE
+if (db) {
+  onValue(dbRef(db, "podcast_progreso"), (snapshot) => {
+    const dataNube = snapshot.val();
+    if (dataNube) {
+      Object.keys(dataNube).forEach(id => {
+        const local = progresoGuardado[id];
+        const nube = dataNube[id];
+        if (!local || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
+          progresoGuardado[id] = nube;
+        }
+      });
+      localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+      renderLista();
+    }
+  });
+
+  onValue(dbRef(db, "podcast_vueltas"), (snapshot) => {
+    const vueltasNube = snapshot.val();
+    if (vueltasNube) {
+      Object.keys(vueltasNube).forEach(temaId => {
+        const local = vueltasGuardadas[temaId] || { count: 0, updatedAt: 0 };
+        const nube = vueltasNube[temaId];
+        if (nube.count > local.count || (nube.updatedAt && nube.updatedAt > (local.updatedAt || 0))) {
+          vueltasGuardadas[temaId] = nube;
+        }
+      });
+      localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
+      renderLista();
+    }
+  });
+}
+
+// 6. LÓGICA DE CATÁLOGO, VUELTAS Y REPRODUCCIÓN
+function localizarPistaEnCatalogo(parteId) {
+  for (const bloque of ["comun", "especifico"]) {
+    for (const tema of CATALOGO[bloque]) {
+      const idx = tema.partes.findIndex(p => p.id === parteId);
+      if (idx !== -1) {
+        return { bloque, tema, indiceParte: idx };
+      }
+    }
+  }
+  return null;
+}
+
+function verificarTemaCompleto(parteId) {
+  const info = localizarPistaEnCatalogo(parteId);
+  if (!info) return false;
+
+  const { tema } = info;
+  const todasCompletadas = tema.partes.every(p => progresoGuardado[p.id]?.completed === true);
+
+  if (todasCompletadas) {
+    bloqueandoGuardado = true;
+    const ahora = Date.now() + 100;
+    const actual = vueltasGuardadas[tema.temaId]?.count || 0;
+    const nuevoRegistroVueltas = { count: actual + 1, updatedAt: ahora };
+
+    vueltasGuardadas[tema.temaId] = nuevoRegistroVueltas;
+    localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
+    if (db) set(dbRef(db, `podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
+
+    tema.partes.forEach(p => {
+      const resetParte = {
+        time: 0,
+        duration: progresoGuardado[p.id]?.duration || 0,
+        percent: 0,
+        completed: false,
+        updatedAt: ahora
+      };
+      progresoGuardado[p.id] = resetParte;
+      if (db) set(dbRef(db, `podcast_progreso/${p.id}`), resetParte);
+    });
+
+    localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
+
+    progressBar.style.width = "0%";
+    timeCurrent.textContent = "00:00";
+    currentPercent.textContent = "0%";
+    currentTitle.textContent = `✓ ${tema.titulo} completado (+1 vuelta)`;
+    pistaActual = null;
+
+    setTimeout(() => { bloqueandoGuardado = false; }, 1000);
+    return true;
+  }
+  return false;
+}
+
+function renderLista() {
+  listaEl.innerHTML = "";
+  const temas = CATALOGO[bloqueActual];
+
+  if (!temas || temas.length === 0) {
+    listaEl.innerHTML = `<p style="color: #b3b3b3; text-align: center; padding: 30px 10px;">Aún no hay audios añadidos en este bloque.</p>`;
+    return;
+  }
+
+  temas.forEach(tema => {
+    let sumaPorcentajes = 0;
+    let contienePistaActiva = false;
+
+    tema.partes.forEach(parte => {
+      const data = progresoGuardado[parte.id] || { percent: 0, completed: false };
+      sumaPorcentajes += data.completed ? 100 : (data.percent || 0);
+      if (pistaActual && pistaActual.id === parte.id) {
+        contienePistaActiva = true;
+      }
+    });
+
+    const pctGlobal = Math.round(sumaPorcentajes / tema.partes.length);
+    const estaAbierto = temaAbiertoId === tema.temaId;
+    const numVueltas = vueltasGuardadas[tema.temaId]?.count || 0;
+    const textoVueltas = numVueltas === 1 ? "🔄 1 vuelta" : `🔄 ${numVueltas} vueltas`;
+
+    const grupoEl = document.createElement("div");
+    grupoEl.className = `tema-grupo ${estaAbierto ? "open" : ""} ${contienePistaActiva ? "has-playing" : ""}`;
+
+    const headerEl = document.createElement("div");
+    headerEl.className = "tema-header";
+    headerEl.innerHTML = `
+      <div class="tema-top">
+        <span class="tema-titulo">
+          <span class="chevron">▶</span>
+          ${tema.titulo}
+        </span>
+        <div class="tema-meta">
+          <span class="vueltas-badge ${numVueltas === 0 ? "cero" : ""}" title="Veces completado el tema entero">${textoVueltas}</span>
+          <span class="partes-badge">${tema.partes.length} ${tema.partes.length === 1 ? "pista" : "pistas"}</span>
+          <span class="ep-percent">${pctGlobal}%</span>
+        </div>
+      </div>
+      <div class="mini-progress-bg">
+        <div class="mini-progress-fill" style="width: ${pctGlobal}%"></div>
+      </div>
+    `;
+
+    headerEl.onclick = () => {
+      temaAbiertoId = (temaAbiertoId === tema.temaId) ? null : tema.temaId;
+      renderLista();
+    };
+
+    const partesContainer = document.createElement("div");
+    partesContainer.className = "tema-partes";
+
+    tema.partes.forEach(parte => {
+      const data = progresoGuardado[parte.id] || { time: 0, duration: 0, percent: 0, completed: false };
+      const isPlaying = pistaActual && pistaActual.id === parte.id;
+
+      const card = document.createElement("div");
+      card.className = `episodio-card ${isPlaying ? "playing" : ""}`;
+      card.innerHTML = `
+        <div class="ep-header">
+          <span class="ep-title">${parte.titulo}</span>
+          <span class="ep-percent ${data.completed ? "done" : ""}">
+            ${data.completed ? "✓ Lista" : `${data.percent}%`}
+          </span>
+        </div>
+        <div class="mini-progress-bg">
+          <div class="mini-progress-fill" style="width: ${data.percent}%"></div>
+        </div>
+      `;
+      card.onclick = (e) => {
+        e.stopPropagation();
+        cargarPista(parte, tema.titulo);
+      };
+      partesContainer.appendChild(card);
+    });
+
+    grupoEl.appendChild(headerEl);
+    grupoEl.appendChild(partesContainer);
+    listaEl.appendChild(grupoEl);
+  });
+}
+
+function cargarPista(ep, tituloTema, esReintento = false) {
+  if (pistaActual && pistaActual.id !== ep.id) {
+    guardarProgreso(true);
+  }
+
+  bloqueandoGuardado = false;
+  const nombreCompleto = `${tituloTema} · ${ep.titulo}`;
+  pistaActual = { ...ep, nombreCompleto, tituloTema };
+  currentTitle.textContent = "Cargando " + nombreCompleto + "...";
+
+  audio.onloadedmetadata = null;
+  audio.onerror = null;
+  audio.pause();
+
+  audio.src = ep.archivo;
+  audio.playbackRate = velocidades[idxVelocidad];
+
+  const saved = progresoGuardado[ep.id];
+
+  audio.onloadedmetadata = () => {
+    currentTitle.textContent = nombreCompleto;
+    timeTotal.textContent = formatTime(audio.duration);
+    if (saved && !saved.completed && saved.time > 0) {
+      audio.currentTime = Math.max(0, saved.time - 4);
+    } else {
+      audio.currentTime = 0;
+    }
+
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          btnPlay.textContent = "❚❚";
+        })
+        .catch(() => {
+          btnPlay.textContent = "▶";
+          currentTitle.textContent = "Listo: " + nombreCompleto;
+        });
+    }
+    actualizarMediaSession(nombreCompleto);
+    renderLista();
+  };
+
+  audio.onerror = () => {
+    if (!esReintento) {
+      setTimeout(() => cargarPista(ep, tituloTema, true), 800);
+      return;
+    }
+    currentTitle.textContent = "⚠️ Error al cargar el audio desde GitHub";
+    btnPlay.textContent = "▶";
+  };
+
+  audio.load();
+}
+
 function guardarProgreso(forzar = false, esFinDePista = false) {
   if (bloqueandoGuardado || !pistaActual || !audio.duration) return false;
 
@@ -238,11 +507,8 @@ audio.onended = () => {
 
   const pistaTerminadaId = pistaActual.id;
   const info = localizarPistaEnCatalogo(pistaTerminadaId);
-
-  // Marca la pista como 100% terminada y comprueba si se completó el tema entero
   const temaAcabado = guardarProgreso(true, true);
 
-  // Si Auto: ON está activo y el tema aún tiene más pistas por delante, pasa a la siguiente
   if (autoPlayContinuo && !temaAcabado && info) {
     const siguienteParte = info.tema.partes[info.indiceParte + 1];
     if (siguienteParte) {
