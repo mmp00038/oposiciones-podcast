@@ -299,7 +299,7 @@ function renderLista() {
   });
 }
 
-function cargarPista(ep, tituloTema) {
+function cargarPista(ep, tituloTema, esReintento = false) {
   if (pistaActual && pistaActual.id !== ep.id) {
     guardarProgreso(true);
   }
@@ -308,6 +308,12 @@ function cargarPista(ep, tituloTema) {
   const nombreCompleto = `${tituloTema} · ${ep.titulo}`;
   pistaActual = { ...ep, nombreCompleto, tituloTema };
   currentTitle.textContent = "Cargando " + nombreCompleto + "...";
+
+  // Limpiar manejadores previos para evitar falsos errores al cambiar de pista
+  audio.onloadedmetadata = null;
+  audio.onerror = null;
+  audio.pause();
+
   audio.src = ep.archivo;
   audio.playbackRate = velocidades[idxVelocidad];
 
@@ -321,16 +327,34 @@ function cargarPista(ep, tituloTema) {
     } else {
       audio.currentTime = 0;
     }
-    audio.play();
-    btnPlay.textContent = "❚❚";
+
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          btnPlay.textContent = "❚❚";
+        })
+        .catch(() => {
+          // Si el móvil bloquea el autoplay con pantalla apagada, deja la pista lista para dar Play
+          btnPlay.textContent = "▶";
+          currentTitle.textContent = "Listo: " + nombreCompleto;
+        });
+    }
     actualizarMediaSession(nombreCompleto);
     renderLista();
   };
 
   audio.onerror = () => {
+    // Reintento automático único por si GitHub Releases tardó en redirigir
+    if (!esReintento) {
+      setTimeout(() => cargarPista(ep, tituloTema, true), 800);
+      return;
+    }
     currentTitle.textContent = "⚠️ Error al cargar el audio desde GitHub";
     btnPlay.textContent = "▶";
   };
+
+  audio.load();
 }
 
 function guardarProgreso(forzar = false, esFinDePista = false) {
