@@ -1,5 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref as dbRef, set, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // 1. PEGA AQUÍ LA CONFIGURACIÓN REAL DE TU FIREBASE
 const firebaseConfig = {
@@ -223,9 +224,43 @@ if (btnAuto) {
   };
 }
 
-// 5. SINCRONIZACIÓN EN TIEMPO REAL CON FIREBASE
-if (db) {
-  onValue(dbRef(db, "podcast_progreso"), (snapshot) => {
+// 5. AUTENTICACIÓN Y SINCRONIZACIÓN POR USUARIO (usuarios/\$uid)
+const auth = getAuth();
+let currentUid = null;
+
+const loginOverlay = document.getElementById("login-overlay");
+const loginForm = document.getElementById("login-form");
+const loginError = document.getElementById("login-error");
+
+if (loginForm) {
+  loginForm.onsubmit = async (e) => {
+    e.preventDefault();
+    loginError.style.display = "none";
+    const email = document.getElementById("login-email").value;
+    const pass = document.getElementById("login-pass").value;
+    try {
+      await signInWithEmailAndPassword(auth, email, pass);
+    } catch (err) {
+      loginError.style.display = "block";
+    }
+  };
+}
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    currentUid = user.uid;
+    if (loginOverlay) loginOverlay.style.display = "none";
+    iniciarSincronizacionFirebase(currentUid);
+  } else {
+    currentUid = null;
+    if (loginOverlay) loginOverlay.style.display = "flex";
+  }
+});
+
+function iniciarSincronizacionFirebase(uid) {
+  if (!db) return;
+
+  onValue(dbRef(db, `usuarios/${uid}/podcast_progreso`), (snapshot) => {
     const dataNube = snapshot.val();
     if (dataNube) {
       Object.keys(dataNube).forEach(id => {
@@ -240,7 +275,7 @@ if (db) {
     }
   });
 
-  onValue(dbRef(db, "podcast_vueltas"), (snapshot) => {
+  onValue(dbRef(db, `usuarios/${uid}/podcast_vueltas`), (snapshot) => {
     const vueltasNube = snapshot.val();
     if (vueltasNube) {
       Object.keys(vueltasNube).forEach(temaId => {
@@ -284,7 +319,7 @@ function verificarTemaCompleto(parteId) {
 
     vueltasGuardadas[tema.temaId] = nuevoRegistroVueltas;
     localStorage.setItem("ama_podcast_vueltas", JSON.stringify(vueltasGuardadas));
-    if (db) set(dbRef(db, `podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
+    if (db && currentUid) set(dbRef(db, `usuarios/${currentUid}/podcast_vueltas/${tema.temaId}`), nuevoRegistroVueltas);
 
     tema.partes.forEach(p => {
       const resetParte = {
@@ -295,7 +330,7 @@ function verificarTemaCompleto(parteId) {
         updatedAt: ahora
       };
       progresoGuardado[p.id] = resetParte;
-      if (db) set(dbRef(db, `podcast_progreso/${p.id}`), resetParte);
+      if (db && currentUid) set(dbRef(db, `usuarios/${currentUid}/podcast_progreso/${p.id}`), resetParte);
     });
 
     localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
@@ -474,7 +509,7 @@ function guardarProgreso(forzar = false, esFinDePista = false) {
 
   progresoGuardado[idPista] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-  if (db) set(dbRef(db, `podcast_progreso/${idPista}`), registro);
+  if (db && currentUid) set(dbRef(db, `usuarios/${currentUid}/podcast_progreso/${idPista}`), registro);
 
   let temaCompletado = false;
   if (completed) {
@@ -539,7 +574,7 @@ document.getElementById("btn-reset").onclick = () => {
   const registro = { time: 0, duration: Math.floor(audio.duration), percent: 0, completed: false, updatedAt: Date.now() };
   progresoGuardado[pistaActual.id] = registro;
   localStorage.setItem("ama_podcast_progreso", JSON.stringify(progresoGuardado));
-  if (db) set(dbRef(db, `podcast_progreso/${pistaActual.id}`), registro);
+  if (db && currentUid) set(dbRef(db, `usuarios/${currentUid}/podcast_progreso/${pistaActual.id}`), registro);
   renderLista();
 };
 
